@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Package = require('../models/Package');
+const { protect, admin } = require('../middleware/authMiddleware');
 
 // GET all packages - with optional month filtering
 router.get('/', async (req, res) => {
@@ -24,6 +25,42 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET latest three packages (most recently created, starting from current month onwards)
+router.get('/latest', async (req, res) => {
+  try {
+    const currentDate = new Date();
+    const currentMonthIdx = currentDate.getMonth(); // 0 for Jan, 5 for June
+    
+    const monthsOrder = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    
+    // Fetch all packages sorted by creation date (newest first)
+    const allPackages = await Package.find({}).sort({ createdAt: -1 });
+    
+    // Filter to only include packages of current or future months (and Ramadan)
+    const upcomingPackages = allPackages.filter(pkg => {
+      if (pkg.month.toLowerCase() === 'ramadan') return true;
+      const pkgMonthIdx = monthsOrder.findIndex(m => m.toLowerCase() === pkg.month.toLowerCase());
+      if (pkgMonthIdx === -1) return false;
+      return pkgMonthIdx >= currentMonthIdx;
+    });
+    
+    // Take the 3 most recently created upcoming packages
+    let latestThree = upcomingPackages.slice(0, 3);
+    
+    // Fallback if not enough upcoming packages are found
+    if (latestThree.length < 3) {
+      latestThree = allPackages.slice(0, 3);
+    }
+    
+    res.json(latestThree);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // GET single package details
 router.get('/:id', async (req, res) => {
   try {
@@ -38,7 +75,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST create a package (Admin)
-router.post('/', async (req, res) => {
+router.post('/', protect, admin, async (req, res) => {
   const {
     title,
     month,
@@ -51,7 +88,8 @@ router.post('/', async (req, res) => {
     flights,
     inclusions,
     description,
-    isFeatured
+    isFeatured,
+    tag
   } = req.body;
 
   try {
@@ -67,7 +105,8 @@ router.post('/', async (req, res) => {
       flights,
       inclusions,
       description,
-      isFeatured
+      isFeatured,
+      tag
     });
 
     const savedPackage = await newPackage.save();
@@ -78,7 +117,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update a package (Admin)
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, admin, async (req, res) => {
   try {
     const updatedPackage = await Package.findByIdAndUpdate(
       req.params.id,
@@ -95,7 +134,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE a package (Admin)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, admin, async (req, res) => {
   try {
     const pkg = await Package.findByIdAndDelete(req.params.id);
     if (!pkg) {

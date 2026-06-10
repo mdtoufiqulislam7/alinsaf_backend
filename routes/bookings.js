@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Booking = require('../models/Booking');
 const Package = require('../models/Package');
+const { protect, admin } = require('../middleware/authMiddleware');
 
 // GET all bookings (Admin) - sorted by date descending, with package details populated
-router.get('/', async (req, res) => {
+router.get('/', protect, admin, async (req, res) => {
   try {
     const bookings = await Booking.find()
       .populate('packageId')
@@ -56,7 +57,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update booking status (Admin) - e.g. confirm or cancel
-router.put('/:id', async (req, res) => {
+router.put('/:id', protect, admin, async (req, res) => {
   const { status } = req.body;
 
   if (!['Pending', 'Confirmed', 'Cancelled'].includes(status)) {

@@ -56,6 +56,11 @@ const packageSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  tag: {
+    type: String,
+    enum: ['Premium', 'Diamond', 'Gold', ''],
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now

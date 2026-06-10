@@ -1,6 +1,28 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const Package = require('../models/Package');
+const About = require('../models/About');
+
+const teamMembers = [
+  {
+    name: 'আল্লামা খালিদ সাইফুল্লাহ আইয়ূবী',
+    role: 'Managing Director',
+    designation: 'Founder মারকাযুত তারবিয়াহ বাংলাদেশ',
+    image: 'https://res.cloudinary.com/dshkbza19/image/upload/v1781119835/WhatsApp_Image_2026-06-11_at_1.19.48_AM_zjn3zy.jpg'
+  },
+  {
+    name: 'Mowlana Kawser Ahmed Habibi',
+    role: 'CEO',
+    designation: 'খতিব:- সিটি কর্পোরেশন জামে মসজিদ, গাজীপুর মহানগর।',
+    image: 'https://res.cloudinary.com/dshkbza19/image/upload/v1781119690/Gemini_Generated_Image_8e7ux98e7ux98e7u_cnbq7v.png'
+  },
+  {
+    name: 'মুফতি শহিদুল ইসলাম',
+    role: 'Hajj Management Manager',
+    designation: 'খতিব বাইতুল মামুর জামে মসজিদ ( গেন্ডা সাভার,ঢাকা)',
+    image: 'https://res.cloudinary.com/dshkbza19/image/upload/v1781119724/Gemini_Generated_Image_5fxuer5fxuer5fxu_vmwfqa.png'
+  }
+];
 
 // Load environment variables
 dotenv.config();
@@ -26,7 +48,8 @@ const packages = [
       'Iftar & Suhoor Buffet'
     ],
     description: 'Experience the blessings of Ramadan in the holy cities of Makkah and Madinah. Our premium Ramadan package includes accommodation in close proximity to the Haram, high-quality buffet meals, and VIP ground transfers.',
-    isFeatured: true
+    isFeatured: true,
+    tag: 'Premium'
   },
   {
     title: 'Autumn Umrah Package',
@@ -47,7 +70,8 @@ const packages = [
       'Complementary Zamzam water'
     ],
     description: 'Perform Umrah in the pleasant autumn weather. This package balances luxury and affordability, featuring a 5-star hotel in Makkah and a comfortable 4-star hotel in Madinah close to Masjid Nabawi.',
-    isFeatured: true
+    isFeatured: true,
+    tag: 'Gold'
   },
   {
     title: 'Winter Warmth Umrah',
@@ -68,7 +92,8 @@ const packages = [
       'Free Sim Card with Data'
     ],
     description: 'Avoid the intense summer heat by travelling during December. Perfect for families, this package features premium 5-star lodging in both holy cities and transport via the high-speed Haramain Train.',
-    isFeatured: true
+    isFeatured: true,
+    tag: 'Diamond'
   },
   {
     title: 'New Year Blessings Umrah',
@@ -89,7 +114,8 @@ const packages = [
       'Umrah Training Kit'
     ],
     description: 'Start the new year with spiritual rejuvenation. Enjoy your stay in Makkah at the elegant Hilton Suites in Jabal Omar, combined with a comfortable and modern hotel experience in Madinah.',
-    isFeatured: false
+    isFeatured: false,
+    tag: 'Gold'
   },
   {
     title: 'Spring Season Devotion Umrah',
@@ -109,7 +135,8 @@ const packages = [
       'Experienced Tour Guide'
     ],
     description: 'A pocket-friendly, high-quality spring package ideal for groups and individual pilgrims. Enjoy a comfortable stay in highly-rated 4-star hotels with excellent service and proximity to the holy sites.',
-    isFeatured: false
+    isFeatured: false,
+    tag: 'Gold'
   },
   {
     title: 'Shaban Pre-Ramadan Special',
@@ -130,7 +157,8 @@ const packages = [
       'Exclusive Ziyarat tour with historian guide'
     ],
     description: 'Perform Umrah in the sacred month of Shaban and prepare your heart for Ramadan. Stay at the world-famous Fairmont Clock Tower in Makkah and enjoy top-tier hospitality in Madinah.',
-    isFeatured: false
+    isFeatured: false,
+    tag: 'Premium'
   },
   {
     title: 'Mid-Summer Spiritual Journey',
@@ -150,7 +178,8 @@ const packages = [
       'Ziyarat Tours'
     ],
     description: 'Our most economical package for those who wish to visit the Holy House during the summer break. Le Méridien Towers provides 24/7 private shuttle service directly to the Haram courtyard.',
-    isFeatured: false
+    isFeatured: false,
+    tag: 'Gold'
   },
   {
     title: 'Rabi al-Awwal Mawlid Special',
@@ -170,7 +199,8 @@ const packages = [
       'Ziyarat with historical guidance'
     ],
     description: 'Celebrate the month of the Prophet\'s birth (Mawlid al-Nabawi) in Madinah and Makkah. This special package includes rich historical sightseeing and excellent close-to-Haram hotels.',
-    isFeatured: false
+    isFeatured: false,
+    tag: 'Diamond'
   }
 ];
 
@@ -186,6 +216,14 @@ const seedDB = async () => {
     // Insert new packages
     const createdPackages = await Package.insertMany(packages);
     console.log(`${createdPackages.length} packages successfully seeded!`);
+
+    // Clear existing abouts
+    await About.deleteMany();
+    console.log('Existing about members cleared.');
+
+    // Insert new abouts
+    const createdAbouts = await About.insertMany(teamMembers);
+    console.log(`${createdAbouts.length} about members successfully seeded!`);
     
     mongoose.connection.close();
     console.log('Database connection closed.');

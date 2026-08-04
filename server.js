@@ -20,6 +20,7 @@ app.use('/api/packages', require('./routes/packages'));
 app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/about', require('./routes/about'));
+app.use('/api/sales', require('./routes/sales'));
 
 // Basic route
 app.get('/', (req, res) => {

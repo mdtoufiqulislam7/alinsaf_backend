@@ -1,5 +1,32 @@
 const mongoose = require('mongoose');
 
+const itemSchema = new mongoose.Schema({
+  productType: {
+    type: String,
+    enum: ['Umrah Visa', 'Single Air Ticket', 'Air Group Ticket', 'Umrah Package', 'Transport', 'Hotel', 'Other'],
+    default: 'Other'
+  },
+  description: {
+    type: String,
+    trim: true,
+    required: true
+  },
+  quantity: {
+    type: Number,
+    default: 1,
+    min: [1, 'Quantity must be at least 1']
+  },
+  unitPrice: {
+    type: Number,
+    default: 0,
+    min: [0, 'Unit price cannot be negative']
+  },
+  totalPrice: {
+    type: Number,
+    default: 0
+  }
+});
+
 const saleSchema = new mongoose.Schema({
   invoiceNo: {
     type: String,
@@ -26,20 +53,30 @@ const saleSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  customerId: {
+    type: String,
+    trim: true,
+    index: true
+  },
+  customerOrderSeq: {
+    type: Number,
+    default: 1
+  },
+  // Multiple line items array
+  items: [itemSchema],
+  // Main product metadata for summary/filtering
   productType: {
     type: String,
-    enum: ['Umrah Visa', 'Single Air Ticket', 'Air Group Ticket', 'Umrah Package', 'Other'],
-    required: [true, 'Product type is required']
+    default: 'Umrah Visa'
   },
   productDetails: {
     type: String,
-    required: [true, 'Product details are required'],
-    trim: true
+    trim: true,
+    default: ''
   },
   quantity: {
     type: Number,
-    default: 1,
-    min: [1, 'Quantity must be at least 1']
+    default: 1
   },
   unitPrice: {
     type: Number,
@@ -47,7 +84,7 @@ const saleSchema = new mongoose.Schema({
   },
   totalAmount: {
     type: Number,
-    required: [true, 'Total amount is required'],
+    default: 0,
     min: [0, 'Total amount cannot be negative']
   },
   paidAmount: {
@@ -82,8 +119,31 @@ const saleSchema = new mongoose.Schema({
   }
 });
 
-// Middleware to compute dueAmount & paymentStatus before save
+// Middleware to compute line item totals, grand total, dueAmount & paymentStatus before save
 saleSchema.pre('save', function () {
+  if (this.items && this.items.length > 0) {
+    let computedTotal = 0;
+    this.items.forEach(item => {
+      item.totalPrice = (Number(item.quantity) || 1) * (Number(item.unitPrice) || 0);
+      computedTotal += item.totalPrice;
+    });
+
+    if (computedTotal > 0) {
+      this.totalAmount = computedTotal;
+    }
+
+    if (this.items.length === 1) {
+      this.productType = this.items[0].productType;
+      this.productDetails = this.items[0].description;
+      this.quantity = this.items[0].quantity;
+      this.unitPrice = this.items[0].unitPrice;
+    } else {
+      this.productType = 'Multiple Products';
+      this.productDetails = this.items.map(i => `${i.description} (Qty: ${i.quantity} @ ৳${i.unitPrice})`).join(' | ');
+      this.quantity = this.items.reduce((acc, curr) => acc + (curr.quantity || 1), 0);
+    }
+  }
+
   const total = Number(this.totalAmount) || 0;
   const paid = Number(this.paidAmount) || 0;
   this.dueAmount = Math.max(0, total - paid);

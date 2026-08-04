@@ -12,11 +12,58 @@ const generateInvoiceNumber = async () => {
   return `INV-${currentYear}-${sequence}${timestamp}`;
 };
 
+// Helper to get or generate permanent Customer ID per phone number
+const getOrGenerateCustomerId = async (customerPhone) => {
+  const cleanPhone = (customerPhone || '').trim();
+  if (!cleanPhone) return { customerId: 'CUST-0001', customerOrderSeq: 1 };
+
+  // Check if an existing sale exists with this phone number
+  const existing = await Sale.findOne({ customerPhone: cleanPhone }).sort({ createdAt: 1 });
+
+  if (existing && existing.customerId) {
+    const totalCustomerOrders = await Sale.countDocuments({ customerPhone: cleanPhone });
+    return {
+      customerId: existing.customerId,
+      customerOrderSeq: totalCustomerOrders + 1
+    };
+  }
+
+  // Count distinct customer phone numbers to assign next CUST-XXXX
+  const distinctPhones = await Sale.distinct('customerPhone');
+  const nextSeq = String(distinctPhones.length + 1).padStart(4, '0');
+  const customerId = `CUST-${nextSeq}`;
+
+  return {
+    customerId,
+    customerOrderSeq: 1
+  };
+};
+
+// Helper to backfill customerId for legacy sales
+const backfillCustomerIds = async () => {
+  try {
+    const unassigned = await Sale.find({ $or: [{ customerId: { $exists: false } }, { customerId: '' }, { customerId: null }] }).sort({ createdAt: 1 });
+    if (unassigned.length > 0) {
+      for (const sale of unassigned) {
+        const { customerId, customerOrderSeq } = await getOrGenerateCustomerId(sale.customerPhone);
+        sale.customerId = customerId;
+        sale.customerOrderSeq = customerOrderSeq;
+        await sale.save();
+      }
+    }
+  } catch (err) {
+    console.error('Error backfilling customer IDs:', err);
+  }
+};
+
 // @route   GET /api/sales
 // @desc    Get all sales with optional filtering
 // @access  Private/Admin
 router.get('/', protect, admin, async (req, res) => {
   try {
+    // Backfill any unassigned sales records
+    await backfillCustomerIds();
+
     const { search, paymentStatus, productType, dueOnly } = req.query;
     let query = {};
 
@@ -24,9 +71,11 @@ router.get('/', protect, admin, async (req, res) => {
       query.$or = [
         { customerName: { $regex: search, $options: 'i' } },
         { customerPhone: { $regex: search, $options: 'i' } },
+        { customerId: { $regex: search, $options: 'i' } },
         { companyName: { $regex: search, $options: 'i' } },
         { invoiceNo: { $regex: search, $options: 'i' } },
-        { productDetails: { $regex: search, $options: 'i' } }
+        { productDetails: { $regex: search, $options: 'i' } },
+        { 'items.description': { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -62,7 +111,6 @@ router.get('/stats', protect, admin, async (req, res) => {
     let totalDue = 0;
     let dueAlertCount = 0;
 
-    const today = new Date();
     const upcomingDues = [];
 
     const categoryMap = {
@@ -70,10 +118,11 @@ router.get('/stats', protect, admin, async (req, res) => {
       'Single Air Ticket': 0,
       'Air Group Ticket': 0,
       'Umrah Package': 0,
+      'Transport': 0,
+      'Hotel': 0,
       'Other': 0
     };
 
-    // Monthly aggregator (last 6-12 months)
     const monthlyMap = {};
 
     sales.forEach(sale => {
@@ -86,7 +135,16 @@ router.get('/stats', protect, admin, async (req, res) => {
         upcomingDues.push(sale);
       }
 
-      if (categoryMap[sale.productType] !== undefined) {
+      if (sale.items && sale.items.length > 0) {
+        sale.items.forEach(item => {
+          const type = item.productType || 'Other';
+          if (categoryMap[type] !== undefined) {
+            categoryMap[type] += item.totalPrice || 0;
+          } else {
+            categoryMap['Other'] += item.totalPrice || 0;
+          }
+        });
+      } else if (categoryMap[sale.productType] !== undefined) {
         categoryMap[sale.productType] += sale.totalAmount || 0;
       }
 
@@ -101,7 +159,6 @@ router.get('/stats', protect, admin, async (req, res) => {
       monthlyMap[monthYear].count += 1;
     });
 
-    // Sort upcoming dues by dueDate asc
     upcomingDues.sort((a, b) => {
       if (!a.dueDate) return 1;
       if (!b.dueDate) return -1;
@@ -116,7 +173,7 @@ router.get('/stats', protect, admin, async (req, res) => {
       totalPaid,
       totalDue,
       dueAlertCount,
-      upcomingDues: upcomingDues.slice(0, 10), // return top 10 upcoming due items
+      upcomingDues: upcomingDues.slice(0, 10),
       categoryBreakdown: categoryMap,
       monthlyChart
     });
@@ -136,6 +193,7 @@ router.post('/', protect, admin, async (req, res) => {
       customerName,
       customerPhone,
       companyName,
+      items,
       productType,
       productDetails,
       quantity,
@@ -146,29 +204,52 @@ router.post('/', protect, admin, async (req, res) => {
       notes
     } = req.body;
 
-    if (!customerName || !customerPhone || !productType || !productDetails || totalAmount === undefined) {
-      return res.status(400).json({ message: 'Please provide all required fields' });
+    if (!customerName || !customerPhone) {
+      return res.status(400).json({ message: 'Please provide customer name and phone number' });
     }
 
     const invoiceNo = await generateInvoiceNumber();
+    const { customerId, customerOrderSeq } = await getOrGenerateCustomerId(customerPhone);
 
-    const sale = new Sale({
+    const saleData = {
       invoiceNo,
+      customerId,
+      customerOrderSeq,
       customerType: customerType || 'Person',
       customerName,
       customerPhone,
       companyName: companyName || '',
-      productType,
-      productDetails,
-      quantity: Number(quantity) || 1,
-      unitPrice: Number(unitPrice) || 0,
-      totalAmount: Number(totalAmount),
       paidAmount: Number(paidAmount) || 0,
       dueDate: dueDate ? new Date(dueDate) : null,
       notes: notes || '',
       createdBy: req.user.name || 'Admin'
-    });
+    };
 
+    if (items && Array.isArray(items) && items.length > 0) {
+      saleData.items = items.map(item => ({
+        productType: item.productType || 'Other',
+        description: item.description || 'Product Item',
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unitPrice) || 0,
+        totalPrice: (Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)
+      }));
+    } else {
+      // Fallback single item
+      saleData.productType = productType || 'Umrah Visa';
+      saleData.productDetails = productDetails || 'Product details';
+      saleData.quantity = Number(quantity) || 1;
+      saleData.unitPrice = Number(unitPrice) || 0;
+      saleData.totalAmount = Number(totalAmount) || (saleData.quantity * saleData.unitPrice);
+      saleData.items = [{
+        productType: saleData.productType,
+        description: saleData.productDetails,
+        quantity: saleData.quantity,
+        unitPrice: saleData.unitPrice,
+        totalPrice: saleData.totalAmount
+      }];
+    }
+
+    const sale = new Sale(saleData);
     const savedSale = await sale.save();
     res.status(201).json(savedSale);
   } catch (error) {
@@ -187,32 +268,46 @@ router.put('/:id', protect, admin, async (req, res) => {
       return res.status(404).json({ message: 'Sale record not found' });
     }
 
-    const fieldsToUpdate = [
+    if (req.body.items && Array.isArray(req.body.items)) {
+      sale.items = req.body.items.map(item => ({
+        productType: item.productType || 'Other',
+        description: item.description || 'Product Item',
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unitPrice) || 0,
+        totalPrice: (Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)
+      }));
+    }
+
+    const simpleFields = [
       'customerType',
       'customerName',
       'customerPhone',
       'companyName',
       'productType',
       'productDetails',
-      'quantity',
-      'unitPrice',
-      'totalAmount',
-      'paidAmount',
-      'dueDate',
       'notes'
     ];
 
-    fieldsToUpdate.forEach(field => {
+    simpleFields.forEach(field => {
       if (req.body[field] !== undefined) {
-        if (field === 'dueDate') {
-          sale.dueDate = req.body[field] ? new Date(req.body[field]) : null;
-        } else if (['quantity', 'unitPrice', 'totalAmount', 'paidAmount'].includes(field)) {
-          sale[field] = Number(req.body[field]);
-        } else {
-          sale[field] = req.body[field];
-        }
+        sale[field] = req.body[field];
       }
     });
+
+    // Keep customerId linked cleanly if phone changed
+    if (req.body.customerPhone && req.body.customerPhone !== sale.customerPhone) {
+      const { customerId, customerOrderSeq } = await getOrGenerateCustomerId(req.body.customerPhone);
+      sale.customerId = customerId;
+      sale.customerOrderSeq = customerOrderSeq;
+    }
+
+    if (req.body.paidAmount !== undefined) sale.paidAmount = Number(req.body.paidAmount);
+    if (req.body.totalAmount !== undefined && (!req.body.items || req.body.items.length === 0)) {
+      sale.totalAmount = Number(req.body.totalAmount);
+    }
+    if (req.body.dueDate !== undefined) {
+      sale.dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+    }
 
     const updatedSale = await sale.save();
     res.json(updatedSale);

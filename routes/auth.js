@@ -76,4 +76,44 @@ router.post('/google', async (req, res) => {
   }
 });
 
+// POST /api/auth/email - Login with Email & Hardcoded Password (420420)
+router.post('/email', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
+  }
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check if user exists in database
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found with this email' });
+    }
+
+    // Password check hardcoded to 420420
+    if (password !== '420420') {
+      return res.status(401).json({ message: 'Invalid password' });
+    }
+
+    // Generate JWT token
+    const token = generateToken(user._id, user.role);
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      picture: user.picture,
+      role: user.role,
+      token
+    });
+  } catch (error) {
+    console.error('Email Auth Error:', error.message);
+    res.status(500).json({ message: 'Server error during login' });
+  }
+});
+
 module.exports = router;

@@ -27,6 +27,35 @@ const itemSchema = new mongoose.Schema({
   }
 });
 
+const paymentRecordSchema = new mongoose.Schema({
+  amount: {
+    type: Number,
+    required: [true, 'Payment amount is required'],
+    min: [0, 'Amount cannot be negative']
+  },
+  paymentDate: {
+    type: Date,
+    default: Date.now
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Bank Transfer', 'bKash', 'Nagad', 'Card', 'Cheque', 'Other'],
+    default: 'Cash'
+  },
+  nextDueDate: {
+    type: Date
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  recordedBy: {
+    type: String,
+    default: 'Admin'
+  }
+});
+
 const saleSchema = new mongoose.Schema({
   invoiceNo: {
     type: String,
@@ -104,6 +133,8 @@ const saleSchema = new mongoose.Schema({
     enum: ['Paid', 'Partial', 'Unpaid'],
     default: 'Unpaid'
   },
+  // Detailed installment payment history
+  paymentHistory: [paymentRecordSchema],
   notes: {
     type: String,
     trim: true,
@@ -141,6 +172,14 @@ saleSchema.pre('save', function () {
       this.productType = 'Multiple Products';
       this.productDetails = this.items.map(i => `${i.description} (Qty: ${i.quantity} @ ৳${i.unitPrice})`).join(' | ');
       this.quantity = this.items.reduce((acc, curr) => acc + (curr.quantity || 1), 0);
+    }
+  }
+
+  // If paymentHistory has entries, ensure paidAmount stays in sync with total of all installments
+  if (this.paymentHistory && this.paymentHistory.length > 0) {
+    const historyTotal = this.paymentHistory.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+    if (historyTotal > 0) {
+      this.paidAmount = historyTotal;
     }
   }
 

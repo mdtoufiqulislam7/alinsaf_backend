@@ -57,14 +57,14 @@ const backfillCustomerIds = async () => {
 };
 
 // @route   GET /api/sales
-// @desc    Get all sales with optional filtering
+// @desc    Get all sales with optional filtering and pagination (20 per page)
 // @access  Private/Admin
 router.get('/', protect, admin, async (req, res) => {
   try {
     // Backfill any unassigned sales records
     await backfillCustomerIds();
 
-    const { search, paymentStatus, productType, dueOnly } = req.query;
+    const { search, paymentStatus, productType, dueOnly, page, limit, all } = req.query;
     let query = {};
 
     if (search) {
@@ -79,7 +79,9 @@ router.get('/', protect, admin, async (req, res) => {
       ];
     }
 
-    if (paymentStatus) {
+    if (paymentStatus === 'Due' || dueOnly === 'true') {
+      query.dueAmount = { $gt: 0 };
+    } else if (paymentStatus) {
       query.paymentStatus = paymentStatus;
     }
 
@@ -87,12 +89,39 @@ router.get('/', protect, admin, async (req, res) => {
       query.productType = productType;
     }
 
-    if (dueOnly === 'true') {
-      query.dueAmount = { $gt: 0 };
+    const total = await Sale.countDocuments(query);
+
+    // If all=true is passed, return full list without pagination
+    if (all === 'true') {
+      const sales = await Sale.find(query).sort({ createdAt: -1 });
+      return res.json({
+        sales,
+        page: 1,
+        pages: 1,
+        total,
+        limit: total
+      });
     }
 
-    const sales = await Sale.find(query).sort({ createdAt: -1 });
-    res.json(sales);
+    // Default pagination: 20 items per page
+    const currentPage = Math.max(1, parseInt(page, 10) || 1);
+    const pageLimit = Math.max(1, parseInt(limit, 10) || 20);
+    const skip = (currentPage - 1) * pageLimit;
+
+    const sales = await Sale.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(pageLimit);
+
+    const totalPages = Math.ceil(total / pageLimit) || 1;
+
+    res.json({
+      sales,
+      page: currentPage,
+      pages: totalPages,
+      total,
+      limit: pageLimit
+    });
   } catch (error) {
     console.error('Error fetching sales:', error);
     res.status(500).json({ message: 'Server error fetching sales data' });
@@ -222,8 +251,21 @@ router.post('/', protect, admin, async (req, res) => {
       paidAmount: Number(paidAmount) || 0,
       dueDate: dueDate ? new Date(dueDate) : null,
       notes: notes || '',
-      createdBy: req.user.name || 'Admin'
+      createdBy: req.user.name || 'Admin',
+      paymentHistory: []
     };
+
+    // If initial payment is made upon creation, log it as the 1st installment
+    if (saleData.paidAmount > 0) {
+      saleData.paymentHistory.push({
+        amount: saleData.paidAmount,
+        paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : new Date(),
+        paymentMethod: req.body.paymentMethod || 'Cash',
+        nextDueDate: saleData.dueDate,
+        note: req.body.paymentNote || 'Initial advance payment',
+        recordedBy: req.user.name || 'Admin'
+      });
+    }
 
     if (items && Array.isArray(items) && items.length > 0) {
       saleData.items = items.map(item => ({
@@ -255,6 +297,52 @@ router.post('/', protect, admin, async (req, res) => {
   } catch (error) {
     console.error('Error creating sale:', error);
     res.status(500).json({ message: 'Failed to create sale record: ' + error.message });
+  }
+});
+
+// @route   POST /api/sales/:id/payments
+// @desc    Record a new installment payment on a sale
+// @access  Private/Admin
+router.post('/:id/payments', protect, admin, async (req, res) => {
+  try {
+    const sale = await Sale.findById(req.params.id);
+    if (!sale) {
+      return res.status(404).json({ message: 'Sale record not found' });
+    }
+
+    const { amount, paymentDate, paymentMethod, nextDueDate, note } = req.body;
+    const numAmount = Number(amount);
+
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ message: 'Please enter a valid payment amount greater than 0' });
+    }
+
+    const paymentRecord = {
+      amount: numAmount,
+      paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+      paymentMethod: paymentMethod || 'Cash',
+      nextDueDate: nextDueDate ? new Date(nextDueDate) : null,
+      note: note || '',
+      recordedBy: req.user.name || 'Admin'
+    };
+
+    if (!sale.paymentHistory) {
+      sale.paymentHistory = [];
+    }
+
+    sale.paymentHistory.push(paymentRecord);
+    sale.paidAmount = (Number(sale.paidAmount) || 0) + numAmount;
+
+    // Update scheduled next due date
+    if (nextDueDate !== undefined) {
+      sale.dueDate = nextDueDate ? new Date(nextDueDate) : null;
+    }
+
+    const updatedSale = await sale.save();
+    res.status(201).json(updatedSale);
+  } catch (error) {
+    console.error('Error recording installment payment:', error);
+    res.status(500).json({ message: 'Failed to record installment payment: ' + error.message });
   }
 });
 
@@ -307,6 +395,9 @@ router.put('/:id', protect, admin, async (req, res) => {
     }
     if (req.body.dueDate !== undefined) {
       sale.dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+    }
+    if (req.body.paymentHistory && Array.isArray(req.body.paymentHistory)) {
+      sale.paymentHistory = req.body.paymentHistory;
     }
 
     const updatedSale = await sale.save();
